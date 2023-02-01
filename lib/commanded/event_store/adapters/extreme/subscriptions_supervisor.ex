@@ -53,6 +53,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor do
           subscriber_max_count ->
             if index < subscriber_max_count - 1 do
               start_subscription(
+                event_store,
                 stream,
                 subscription_name,
                 subscriber,
