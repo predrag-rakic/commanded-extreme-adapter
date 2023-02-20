@@ -1,8 +1,6 @@
-version: "3.4"
-
 services:
-  eventstore.db:
-    image: eventstore/eventstore:21.10.9-alpha-arm64v8
+  eventstoredb:
+    image: eventstore/eventstore:22.10.1-alpha-arm64v8
     environment:
       - EVENTSTORE_CLUSTER_SIZE=1
       - EVENTSTORE_RUN_PROJECTIONS=All
