@@ -15,18 +15,21 @@ defmodule Commanded.ExtremeTestCase do
         [
           serializer: Commanded.Serialization.JsonSerializer,
           stream_prefix: "commandedtest" <> UUID.uuid4(:hex),
-          extreme: [
-            db_type: :node,
-            host: "localhost",
-            port: 1113,
-            username: "admin",
-            password: "changeit",
-            reconnect_delay: 2_000,
-            max_attempts: :infinity
+          spear: [
+            connection_string: "esdb://localhost:2113"
           ]
         ],
         config
       )
+
+    # {:ok, child_spec, event_store_meta} = Extreme.child_spec(ExtremeApplication, config)
+    # child = List.first(child_spec)
+    # for child <- child_spec do
+    # # IO.inspect(child, label: "child")
+    # pid = start_supervised!(child) |> IO.inspect(label: "start_supervised!(child)")
+    # end
+
+    # {:ok, event_store_meta |> Map.put(:pid, pid)}
 
     {:ok, child_spec, event_store_meta} = Extreme.child_spec(ExtremeApplication, config)
 
