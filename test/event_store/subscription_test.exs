@@ -4,5 +4,5 @@ defmodule Commanded.EventStore.Adapters.Extreme.SubscriptionTest do
   use Commanded.ExtremeTestCase
   use Commanded.EventStore.SubscriptionTestCase, event_store: Extreme
 
-  defp event_store_wait(_default \\ nil), do: 5_000
+  defp event_store_wait(_default \\ nil), do: 2_000
 end

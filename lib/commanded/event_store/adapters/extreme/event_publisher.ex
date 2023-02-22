@@ -37,13 +37,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.EventPublisher do
   def handle_cast(:subscribe, state) do
     %State{event_store: event_store, stream_name: stream_name} = state
 
-    {:ok, subscription} = Extreme.subscribe_to(event_store, self(), stream_name)
+    {:ok, subscription_ref} = Spear.subscribe(event_store, self(), stream_name, raw?: true)
 
-    ref = Process.monitor(subscription)
-
-    {:noreply, %{state | subscription_ref: ref}}
+    {:noreply, %{state | subscription_ref: subscription_ref}}
   end
 
+  # TODO: needed?
   @impl GenServer
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %State{subscription_ref: ref} = state) do
     reconnect_delay = 1_000
@@ -58,21 +57,14 @@ defmodule Commanded.EventStore.Adapters.Extreme.EventPublisher do
   end
 
   @impl GenServer
-  def handle_info({:on_event, push}, state) do
-    :ok = process_push(push, state)
-
-    {:noreply, state}
-  end
-
-  @impl GenServer
-  def handle_info(_msg, state), do: {:noreply, state}
-
-  defp process_push(push, state) do
+  def handle_info({_, msg}, state) do
     %State{serializer: serializer, pubsub: pubsub} = state
 
-    push
-    |> Mapper.to_recorded_event(serializer)
+    msg
+    |> Mapper.to_recorded_event_spear(serializer)
     |> publish(pubsub)
+
+    {:noreply, state}
   end
 
   defp publish(%RecordedEvent{} = recorded_event, pubsub) do

@@ -25,36 +25,32 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
     pubsub_name = Module.concat([event_store, PubSub])
     subscriptions_name = Module.concat([event_store, SubscriptionsSupervisor])
 
-    # client_name = Module.concat([event_store, Client]) |> IO.inspect(label: :client_name)
-
-    # conn_name = Module.concat([event_store, Conn])
-
     conn_config =
       Keyword.get(config, :spear)
       |> Keyword.put(:name, event_store)
 
     children = [
-      # {Registry, keys: :duplicate, name: pubsub_name, partitions: 1},
+      {Registry, keys: :duplicate, name: pubsub_name, partitions: 1},
       %{
         id: Conn,
         start: {Spear.Connection, :start_link, [conn_config]},
         restart: :permanent,
         shutdown: 5000,
         type: :worker
-      }
-      # %{
-      #   id: EventPublisher,
-      #   start:
-      #     {EventPublisher, :start_link,
-      #      [
-      #        {event_store, pubsub_name, all_stream, serializer},
-      #        [name: event_publisher_name]
-      #      ]},
-      #   restart: :permanent,
-      #   shutdown: 5000,
-      #   type: :worker
-      # },
-      # {SubscriptionsSupervisor, name: subscriptions_name}
+      },
+      %{
+        id: EventPublisher,
+        start:
+          {EventPublisher, :start_link,
+           [
+             {event_store, pubsub_name, all_stream, serializer},
+             [name: event_publisher_name]
+           ]},
+        restart: :permanent,
+        shutdown: 5000,
+        type: :worker
+      },
+      {SubscriptionsSupervisor, name: subscriptions_name}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

@@ -38,7 +38,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.Mixfile do
   defp deps do
     [
       {:commanded, "~> 1.4"},
-      {:extreme, "~> 0.13"},
       {:spear, "~> 1.3"},
       {:gpb, "~> 4.19"},
 
@@ -47,7 +46,8 @@ defmodule Commanded.EventStore.Adapters.Extreme.Mixfile do
 
       # Test & build tooling
       {:ex_doc, "~> 0.21", only: :dev},
-      {:mox, "~> 1.0", only: :test}
+      {:mox, "~> 1.0", only: :test},
+      {:httpoison, "~> 1.7", only: :test}
     ]
   end
 

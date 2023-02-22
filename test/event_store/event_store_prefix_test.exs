@@ -5,13 +5,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.EventStorePrefixTest do
   use Commanded.EventStore.EventStorePrefixTestCase, event_store: Extreme
 
   def start_event_store(config) do
-    uuid = UUID.uuid4() |> String.replace("-", "")
+    uuid = Commanded.UUID.uuid4() |> String.replace("-", "_")
 
     config =
       Keyword.update!(config, :prefix, fn prefix ->
-        "commandedtest" <> prefix <> uuid
+        "commandedtest_" <> prefix <> uuid
       end)
-      |> IO.inspect(label: "config")
 
     ExtremeTestCase.start_event_store(config)
   end

@@ -7,7 +7,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
 
   alias Commanded.EventStore.Adapters.Extreme.Mapper
   alias Commanded.EventStore.RecordedEvent
-  alias Extreme.Msg, as: ExMsg
 
   defmodule State do
     @moduledoc false
@@ -17,15 +16,15 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
       :last_seen_correlation_id,
       :last_seen_event_id,
       :last_seen_event_number,
+      :last_ack_time,
       :name,
       :retry_interval,
       :serializer,
       :stream,
       :start_from,
-      :subscriber_max_count,
+      :concurrency_limit,
       :subscriber,
       :subscriber_ref,
-      :subscription,
       :subscription_ref,
       subscribed?: false
     ]
@@ -44,9 +43,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
       serializer: serializer,
       subscriber: subscriber,
       start_from: Keyword.get(opts, :start_from),
-      subscriber_max_count: Keyword.get(opts, :subscriber_max_count, 1),
-      retry_interval: subscription_retry_interval()
+      concurrency_limit: Keyword.get(opts, :concurrency_limit, 1),
+      retry_interval: subscription_retry_interval(),
+      last_ack_time: System.monotonic_time()
     }
+
+    Logger.debug(fn -> describe(state) <> " start_link" end)
 
     # Prevent duplicate subscriptions by stream/name
     name =
@@ -65,6 +67,8 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
 
   @impl GenServer
   def init(%State{} = state) do
+    Process.flag(:trap_exit, true)
+
     %State{subscriber: subscriber} = state
 
     state = %State{state | subscriber_ref: Process.monitor(subscriber)}
@@ -81,16 +85,23 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
         %State{last_seen_event_number: event_number} = state
       ) do
     %State{
-      subscription: subscription,
-      last_seen_correlation_id: correlation_id,
+      server: server,
+      subscription_ref: subscription_ref,
       last_seen_event_id: event_id
     } = state
 
-    Logger.debug(fn -> describe(state) <> " ack event: #{inspect(event_number)}" end)
+    Logger.debug(fn ->
+      describe(state) <> " ack event: #{inspect(event_number)}, #{inspect(event_id)}"
+    end)
 
-    :ok = Extreme.PersistentSubscription.ack(subscription, event_id, correlation_id)
+    :ok = Spear.ack(server, subscription_ref, [event_id])
 
-    state = %State{state | last_seen_event_id: nil, last_seen_event_number: nil}
+    state = %State{
+      state
+      | last_seen_event_id: nil,
+        last_seen_event_number: nil,
+        last_ack_time: System.monotonic_time()
+    }
 
     {:reply, :ok, state}
   end
@@ -106,30 +117,44 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
   end
 
   @impl GenServer
-  def handle_info({:on_event, event, correlation_id}, %State{} = state) do
-    %State{subscriber: subscriber, subscription: subscription, serializer: serializer} = state
+  def handle_info({_, response}, %State{} = state) do
+    %State{
+      subscriber: subscriber,
+      server: server,
+      subscription_ref: subscription_ref,
+      serializer: serializer
+    } = state
 
-    Logger.debug(fn -> describe(state) <> " received event: #{inspect(event)}" end)
+    response_map =
+      response
+      |> Mapper.persistent_read_response_to_map()
 
-    event_type = event.event.event_type
+    event_type = Map.get(response_map.event.metadata, "type")
+
+    Logger.debug(fn -> describe(state) <> " received response: #{inspect(response_map)}" end)
 
     event_id =
-      case event.link do
-        nil -> event.event.event_id
-        link -> link.event_id
+      case Map.get(response_map, :link, nil) do
+        nil -> response_map.event.id
+        link -> link.id
       end
+      |> Spear.Uuid.from_proto()
+
+    Logger.debug(fn ->
+      describe(state) <>
+        " event_id: #{event_id}, response.event.id: #{inspect(response_map.event.id)}"
+    end)
 
     state =
       if event_type != nil and "$" != String.first(event_type) do
         %RecordedEvent{event_number: event_number} =
-          recorded_event = Mapper.to_recorded_event(event, serializer)
+          recorded_event = Mapper.to_recorded_event_spear(response, serializer)
 
         send(subscriber, {:events, [recorded_event]})
 
         %State{
           state
-          | last_seen_correlation_id: correlation_id,
-            last_seen_event_id: event_id,
+          | last_seen_event_id: event_id,
             last_seen_event_number: event_number
         }
       else
@@ -137,7 +162,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
           describe(state) <> " ignoring event of type: #{inspect(event_type)}"
         end)
 
-        :ok = Extreme.PersistentSubscription.ack(subscription, event_id, correlation_id)
+        :ok = Spear.ack(server, subscription_ref, [event_id])
 
         state
       end
@@ -163,15 +188,36 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
     end
   end
 
+  @impl GenServer
+  def terminate(_, %State{} = state) do
+    ms_since_last_ack =
+      (System.monotonic_time() - state.last_ack_time)
+      |> System.convert_time_unit(:native, :millisecond)
+
+    if ms_since_last_ack >= 0 && ms_since_last_ack < 1000 do
+      # If there is not enough time between an ack and a cancel the ack can be
+      # dropped, see the docs for Spear.connect_to_persistent_subscription/4 for
+      # more info.
+      #
+      # https://hexdocs.pm/spear/Spear.html#connect_to_persistent_subscription/4
+      Logger.debug(fn -> describe(state) <> " sleeping for #{1000 - ms_since_last_ack}" end)
+
+      Process.sleep(1000 - ms_since_last_ack)
+    end
+
+    Logger.debug(fn -> describe(state) <> " cancelling" end)
+    Spear.cancel_subscription(state.server, state.subscription_ref)
+    Logger.debug(fn -> describe(state) <> " cancelled" end)
+  end
+
   defp subscribe(%State{} = state) do
     with :ok <- create_persistent_subscription(state),
-         {:ok, subscription} <- connect_to_persistent_subscription(state) do
+         {:ok, subscription_ref} <- connect_to_persistent_subscription(state) do
       :ok = notify_subscribed(state)
 
       %State{
         state
-        | subscription: subscription,
-          subscription_ref: Process.monitor(subscription),
+        | subscription_ref: subscription_ref,
           subscribed?: true
       }
     else
@@ -201,46 +247,42 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
       name: name,
       stream: stream,
       start_from: start_from,
-      subscriber_max_count: subscriber_max_count
+      concurrency_limit: concurrency_limit
     } = state
 
-    start_from =
+    from =
       case start_from do
-        :origin -> 0
-        :current -> -1
+        :origin -> :start
+        :current -> :end
         event_number -> event_number
       end
 
-    message =
-      ExMsg.CreatePersistentSubscription.new(
-        subscription_group_name: name,
-        event_stream_id: stream,
-        resolve_link_tos: true,
-        start_from: start_from,
-        message_timeout_milliseconds: 10_000,
-        record_statistics: false,
-        live_buffer_size: 500,
-        read_batch_size: 20,
-        buffer_size: 500,
-        max_retry_count: 10,
-        prefer_round_robin: false,
-        checkpoint_after_time: 1_000,
-        checkpoint_max_count: 500,
-        checkpoint_min_count: 1,
-        subscriber_max_count: subscriber_max_count
-      )
+    case Spear.create_persistent_subscription(
+           server,
+           stream,
+           name,
+           %Spear.PersistentSubscription.Settings{
+             max_subscriber_count: concurrency_limit
+           },
+           from: from
+         ) do
+      :ok ->
+        Logger.debug("persistent subscription created")
+        :ok
 
-    case Extreme.execute(server, message) do
-      {:ok, %ExMsg.CreatePersistentSubscriptionCompleted{result: :Success}} -> :ok
-      {:error, :AlreadyExists, _response} -> :ok
-      reply -> reply
+      {:error, %Spear.Grpc.Response{status: :already_exists}} ->
+        Logger.debug("persistent subscription already exists")
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   defp connect_to_persistent_subscription(%State{} = state) do
     %State{server: server, name: name, stream: stream} = state
 
-    Extreme.connect_to_persistent_subscription(server, self(), name, stream, 1)
+    Spear.connect_to_persistent_subscription(server, self(), stream, name, raw?: true)
   end
 
   # Get the delay between subscription attempts, in milliseconds, from app
@@ -259,6 +301,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
   end
 
   defp describe(%State{name: name}) do
-    "Extreme event store subscription #{inspect(name)}"
+    "Extreme event store subscription #{inspect(name)} (#{inspect(self())})"
   end
 end
