@@ -37,6 +37,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
   Start a process to create and connect a persistent connection to the Event Store
   """
   def start_link(adapter_name, stream, subscription_name, subscriber, serializer, opts) do
+    partition_by = Keyword.get(opts, :partition_by, nil)
+
+    if partition_by != nil do
+      raise "partition_by not supported by eventstoredb"
+    end
+
     state = %State{
       spear_conn_name: Config.spear_conn_name(adapter_name),
       stream: stream,
