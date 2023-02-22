@@ -24,7 +24,7 @@ defmodule Commanded.EventStore.Adapters.Extreme do
 
   @impl Commanded.EventStore.Adapter
   def child_spec(application, config) do
-    event_store =
+    adapter_name =
       case Keyword.get(config, :name) do
         nil -> Module.concat([application, Extreme])
         name -> Module.concat([name, Extreme])
@@ -40,14 +40,14 @@ defmodule Commanded.EventStore.Adapters.Extreme do
     child_spec = [
       Supervisor.child_spec(
         {Commanded.EventStore.Adapters.Extreme.Supervisor,
-         Keyword.put(config, :event_store, event_store)},
-        id: event_store
+         Keyword.put(config, :adapter_name, adapter_name)},
+        id: adapter_name
       )
     ]
 
     adapter_meta = %{
       all_stream: Config.all_stream(config),
-      event_store: event_store,
+      adapter_name: adapter_name,
       stream_prefix: Config.stream_prefix(config),
       serializer: Config.serializer(config)
     }
@@ -81,13 +81,11 @@ defmodule Commanded.EventStore.Adapters.Extreme do
   end
 
   @impl Commanded.EventStore.Adapter
-  @spec subscribe(map, any) :: :ok | {:error, {:already_registered, pid}}
   def subscribe(adapter_meta, :all), do: subscribe(adapter_meta, "$all")
 
   @impl Commanded.EventStore.Adapter
   def subscribe(adapter_meta, stream_uuid) do
-    event_store = server_name(adapter_meta)
-    pubsub_name = Module.concat([event_store, PubSub])
+    pubsub_name = pubsub_name(adapter_meta)
 
     with {:ok, _} <- Registry.register(pubsub_name, stream_uuid, []) do
       :ok
@@ -96,13 +94,13 @@ defmodule Commanded.EventStore.Adapters.Extreme do
 
   @impl Commanded.EventStore.Adapter
   def subscribe_to(adapter_meta, :all, subscription_name, subscriber, start_from, opts) do
-    event_store = server_name(adapter_meta)
+    adapter_name = adapter_name(adapter_meta)
     stream = Map.fetch!(adapter_meta, :all_stream)
     serializer = serializer(adapter_meta)
     opts = subscription_options(opts, start_from)
 
     SubscriptionsSupervisor.start_subscription(
-      event_store,
+      adapter_name,
       stream,
       subscription_name,
       subscriber,
@@ -113,13 +111,13 @@ defmodule Commanded.EventStore.Adapters.Extreme do
 
   @impl Commanded.EventStore.Adapter
   def subscribe_to(adapter_meta, stream_uuid, subscription_name, subscriber, start_from, opts) do
-    event_store = server_name(adapter_meta)
+    adapter_name = adapter_name(adapter_meta)
     stream = stream_name(adapter_meta, stream_uuid)
     serializer = serializer(adapter_meta)
     opts = subscription_options(opts, start_from)
 
     SubscriptionsSupervisor.start_subscription(
-      event_store,
+      adapter_name,
       stream,
       subscription_name,
       subscriber,
@@ -135,24 +133,24 @@ defmodule Commanded.EventStore.Adapters.Extreme do
 
   @impl Commanded.EventStore.Adapter
   def unsubscribe(adapter_meta, subscription) do
-    event_store = server_name(adapter_meta)
-    SubscriptionsSupervisor.stop_subscription(event_store, subscription)
+    adapter_name = adapter_name(adapter_meta)
+    SubscriptionsSupervisor.stop_subscription(adapter_name, subscription)
   end
 
   @impl Commanded.EventStore.Adapter
   def delete_subscription(adapter_meta, :all, subscription_name) do
-    event_store = server_name(adapter_meta)
+    spear_conn = spear_conn_name(adapter_meta)
     stream = Map.fetch!(adapter_meta, :all_stream)
 
-    delete_persistent_subscription(event_store, stream, subscription_name)
+    delete_persistent_subscription(spear_conn, stream, subscription_name)
   end
 
   @impl Commanded.EventStore.Adapter
   def delete_subscription(adapter_meta, stream_uuid, subscription_name) do
-    event_store = server_name(adapter_meta)
+    spear_conn = spear_conn_name(adapter_meta)
     stream = stream_name(adapter_meta, stream_uuid)
 
-    delete_persistent_subscription(event_store, stream, subscription_name)
+    delete_persistent_subscription(spear_conn, stream, subscription_name)
   end
 
   @impl Commanded.EventStore.Adapter
@@ -191,10 +189,10 @@ defmodule Commanded.EventStore.Adapters.Extreme do
 
   @impl Commanded.EventStore.Adapter
   def delete_snapshot(adapter_meta, source_uuid) do
-    server = server_name(adapter_meta)
+    spear_conn = spear_conn_name(adapter_meta)
     stream_name = snapshot_stream_name(adapter_meta, source_uuid)
 
-    Spear.delete_stream(server, stream_name, expect: :any)
+    Spear.delete_stream(spear_conn, stream_name, expect: :any)
   end
 
   defp stream_name(adapter_meta, stream_uuid),
@@ -226,7 +224,7 @@ defmodule Commanded.EventStore.Adapters.Extreme do
   end
 
   defp add_to_stream(adapter_meta, stream_name, expected_version, events) do
-    server = server_name(adapter_meta)
+    spear_conn = spear_conn_name(adapter_meta)
     serializer = serializer(adapter_meta)
 
     events = write_events_request(events, serializer)
@@ -240,7 +238,7 @@ defmodule Commanded.EventStore.Adapters.Extreme do
         x -> x - 1
       end
 
-    case Spear.append(events, server, stream_name, expect: expect) do
+    case Spear.append(events, spear_conn, stream_name, expect: expect) do
       {:error, %Spear.ExpectationViolation{} = e} ->
         Logger.debug("add_to_stream: #{inspect(e)}")
 
@@ -268,12 +266,12 @@ defmodule Commanded.EventStore.Adapters.Extreme do
          direction,
          chunk_size
        ) do
-    server = server_name(adapter_meta)
+    spear_conn = spear_conn_name(adapter_meta)
     serializer = serializer(adapter_meta)
 
     stream =
       Spear.stream!(
-        server,
+        spear_conn,
         stream_name,
         from: from,
         direction: direction,
@@ -330,12 +328,12 @@ defmodule Commanded.EventStore.Adapters.Extreme do
     end)
   end
 
-  defp delete_persistent_subscription(server, stream, name) do
+  defp delete_persistent_subscription(spear_conn, stream, name) do
     Logger.debug(fn ->
       "Attempting to delete persistent subscription named #{inspect(name)} on stream #{inspect(stream)}"
     end)
 
-    case Spear.delete_persistent_subscription(server, stream, name, []) do
+    case Spear.delete_persistent_subscription(spear_conn, stream, name, []) do
       :ok ->
         :ok
 
@@ -349,5 +347,13 @@ defmodule Commanded.EventStore.Adapters.Extreme do
   end
 
   defp serializer(adapter_meta), do: Map.fetch!(adapter_meta, :serializer)
-  defp server_name(adapter_meta), do: Map.fetch!(adapter_meta, :event_store)
+
+  defp adapter_name(adapter_meta),
+    do: Map.fetch!(adapter_meta, :adapter_name)
+
+  defp spear_conn_name(adapter_meta),
+    do: adapter_name(adapter_meta) |> Config.spear_conn_name()
+
+  defp pubsub_name(adapter_meta),
+    do: adapter_name(adapter_meta) |> Config.pubsub_name()
 end

@@ -18,4 +18,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Config do
     Keyword.get(config, :serializer) ||
       raise ArgumentError, "expects :serializer to be configured in environment"
   end
+
+  def pubsub_name(adapter_name), do: Module.concat([adapter_name, PubSub])
+  def spear_conn_name(adapter_name), do: Module.concat([adapter_name, SpearConn])
 end

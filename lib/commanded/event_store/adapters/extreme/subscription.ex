@@ -6,13 +6,14 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
   require Logger
 
   alias Commanded.EventStore.Adapters.Extreme.Mapper
+  alias Commanded.EventStore.Adapters.Extreme.Config
   alias Commanded.EventStore.RecordedEvent
 
   defmodule State do
     @moduledoc false
 
     defstruct [
-      :server,
+      :spear_conn_name,
       :last_seen_correlation_id,
       :last_seen_event_id,
       :last_seen_event_number,
@@ -35,9 +36,9 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
   @doc """
   Start a process to create and connect a persistent connection to the Event Store
   """
-  def start_link(event_store, stream, subscription_name, subscriber, serializer, opts) do
+  def start_link(adapter_name, stream, subscription_name, subscriber, serializer, opts) do
     state = %State{
-      server: event_store,
+      spear_conn_name: Config.spear_conn_name(adapter_name),
       stream: stream,
       name: subscription_name,
       serializer: serializer,
@@ -53,7 +54,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
     # Prevent duplicate subscriptions by stream/name
     name =
       {:global,
-       {event_store, __MODULE__, stream, subscription_name, Keyword.get(opts, :index, 1)}}
+       {adapter_name, __MODULE__, stream, subscription_name, Keyword.get(opts, :index, 1)}}
 
     GenServer.start_link(__MODULE__, state, name: name)
   end
@@ -85,7 +86,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
         %State{last_seen_event_number: event_number} = state
       ) do
     %State{
-      server: server,
+      spear_conn_name: spear_conn_name,
       subscription_ref: subscription_ref,
       last_seen_event_id: event_id
     } = state
@@ -94,7 +95,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
       describe(state) <> " ack event: #{inspect(event_number)}, #{inspect(event_id)}"
     end)
 
-    :ok = Spear.ack(server, subscription_ref, [event_id])
+    :ok = Spear.ack(spear_conn_name, subscription_ref, [event_id])
 
     state = %State{
       state
@@ -120,7 +121,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
   def handle_info({_, response}, %State{} = state) do
     %State{
       subscriber: subscriber,
-      server: server,
+      spear_conn_name: spear_conn_name,
       subscription_ref: subscription_ref,
       serializer: serializer
     } = state
@@ -162,7 +163,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
           describe(state) <> " ignoring event of type: #{inspect(event_type)}"
         end)
 
-        :ok = Spear.ack(server, subscription_ref, [event_id])
+        :ok = Spear.ack(spear_conn_name, subscription_ref, [event_id])
 
         state
       end
@@ -206,7 +207,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
     end
 
     Logger.debug(fn -> describe(state) <> " cancelling" end)
-    Spear.cancel_subscription(state.server, state.subscription_ref)
+    Spear.cancel_subscription(state.spear_conn_name, state.subscription_ref)
     Logger.debug(fn -> describe(state) <> " cancelled" end)
   end
 
@@ -243,7 +244,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
 
   defp create_persistent_subscription(%State{} = state) do
     %State{
-      server: server,
+      spear_conn_name: spear_conn_name,
       name: name,
       stream: stream,
       start_from: start_from,
@@ -258,7 +259,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
       end
 
     case Spear.create_persistent_subscription(
-           server,
+           spear_conn_name,
            stream,
            name,
            %Spear.PersistentSubscription.Settings{
@@ -280,9 +281,9 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
   end
 
   defp connect_to_persistent_subscription(%State{} = state) do
-    %State{server: server, name: name, stream: stream} = state
+    %State{spear_conn_name: spear_conn_name, name: name, stream: stream} = state
 
-    Spear.connect_to_persistent_subscription(server, self(), stream, name, raw?: true)
+    Spear.connect_to_persistent_subscription(spear_conn_name, self(), stream, name, raw?: true)
   end
 
   # Get the delay between subscription attempts, in milliseconds, from app

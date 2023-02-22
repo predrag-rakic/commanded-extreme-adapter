@@ -9,8 +9,8 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
   alias Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor
 
   def start_link(config) do
-    event_store = Keyword.fetch!(config, :event_store)
-    name = Module.concat([event_store, Supervisor])
+    adapter_name = Keyword.fetch!(config, :adapter_name)
+    name = Module.concat([adapter_name, Supervisor])
 
     Supervisor.start_link(__MODULE__, config, name: name)
   end
@@ -20,14 +20,17 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
     all_stream = Config.all_stream(config)
     serializer = Config.serializer(config)
 
-    event_store = Keyword.fetch!(config, :event_store)
-    event_publisher_name = Module.concat([event_store, EventPublisher])
-    pubsub_name = Module.concat([event_store, PubSub])
-    subscriptions_name = Module.concat([event_store, SubscriptionsSupervisor])
+    adapter_name = Keyword.fetch!(config, :adapter_name)
+
+    event_publisher_name = Module.concat([adapter_name, EventPublisher])
+    subscriptions_name = Module.concat([adapter_name, SubscriptionsSupervisor])
+
+    pubsub_name = Config.pubsub_name(adapter_name)
+    spear_conn_name = Config.spear_conn_name(adapter_name)
 
     conn_config =
       Keyword.get(config, :spear)
-      |> Keyword.put(:name, event_store)
+      |> Keyword.put(:name, spear_conn_name)
 
     children = [
       {Registry, keys: :duplicate, name: pubsub_name, partitions: 1},
@@ -43,7 +46,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
         start:
           {EventPublisher, :start_link,
            [
-             {event_store, pubsub_name, all_stream, serializer},
+             {spear_conn_name, pubsub_name, all_stream, serializer},
              [name: event_publisher_name]
            ]},
         restart: :permanent,

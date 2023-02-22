@@ -17,7 +17,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor do
   end
 
   def start_subscription(
-        event_store,
+        adapter_name,
         stream,
         subscription_name,
         subscriber,
@@ -25,11 +25,11 @@ defmodule Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor do
         opts,
         index \\ 0
       ) do
-    name = name(event_store)
+    name = name(adapter_name)
 
     spec =
       subscription_spec(
-        event_store,
+        adapter_name,
         stream,
         subscription_name,
         subscriber,
@@ -53,7 +53,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor do
           concurrency_limit ->
             if index < concurrency_limit - 1 do
               start_subscription(
-                event_store,
+                adapter_name,
                 stream,
                 subscription_name,
                 subscriber,
@@ -71,14 +71,14 @@ defmodule Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor do
     end
   end
 
-  def stop_subscription(event_store, subscription) do
-    name = name(event_store)
+  def stop_subscription(adapter_name, subscription) do
+    name = name(adapter_name)
 
     DynamicSupervisor.terminate_child(name, subscription)
   end
 
   defp subscription_spec(
-         event_store,
+         adapter_name,
          stream,
          subscription_name,
          subscriber,
@@ -87,7 +87,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor do
          index
        ) do
     start_args = [
-      event_store,
+      adapter_name,
       stream,
       subscription_name,
       subscriber,
@@ -104,5 +104,5 @@ defmodule Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor do
     }
   end
 
-  defp name(event_store), do: Module.concat([event_store, __MODULE__])
+  defp name(adapter_name), do: Module.concat([adapter_name, __MODULE__])
 end
