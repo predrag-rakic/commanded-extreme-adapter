@@ -38,7 +38,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Mixfile do
   defp deps do
     [
       {:commanded, "~> 1.4"},
-      {:spear, git: "git@github.com:henriiik/spear.git", branch: "master"},
+      {:spear, git: "git@github.com:henriiik/spear.git", branch: "main"},
       {:gpb, "~> 4.19"},
 
       # Optional dependencies
