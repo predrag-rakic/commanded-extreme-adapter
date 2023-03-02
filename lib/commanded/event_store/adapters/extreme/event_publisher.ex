@@ -42,7 +42,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.EventPublisher do
     {:noreply, %{state | subscription_ref: subscription_ref}}
   end
 
-  # TODO: needed?
   @impl GenServer
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %State{subscription_ref: ref} = state) do
     reconnect_delay = 1_000

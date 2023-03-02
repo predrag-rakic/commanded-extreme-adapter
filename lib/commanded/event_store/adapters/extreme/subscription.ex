@@ -213,7 +213,15 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
     end
 
     Logger.debug(fn -> describe(state) <> " cancelling" end)
-    Spear.cancel_subscription(state.spear_conn_name, state.subscription_ref)
+
+    case state.subscription_ref do
+      nil ->
+        nil
+
+      ref ->
+        Spear.cancel_subscription(state.spear_conn_name, state.subscription_ref)
+    end
+
     Logger.debug(fn -> describe(state) <> " cancelled" end)
   end
 
@@ -231,7 +239,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
       err ->
         %State{retry_interval: retry_interval} = state
 
-        Logger.debug(fn ->
+        Logger.warn(fn ->
           describe(state) <>
             " failed to subscribe due to: #{inspect(err)}. Will retry in #{retry_interval}ms"
         end)
