@@ -23,9 +23,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.Config do
   def spear_conn_name(adapter_name), do: Module.concat([adapter_name, SpearConn])
   def leader_conn_name(adapter_name), do: Module.concat([adapter_name, LeaderConn])
 
+  def supervisor_name(adapter_name),
+    do: Module.concat([adapter_name, Supervisor])
+
   def leader_supervisor_name(adapter_name),
     do: Module.concat([adapter_name, LeaderSupervisor])
 
-  def supervisor_name(adapter_name),
-    do: Module.concat([adapter_name, Supervisor])
+  def leader_manager_name(adapter_name),
+    do: Module.concat([adapter_name, LeaderManager])
 end

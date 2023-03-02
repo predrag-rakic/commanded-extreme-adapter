@@ -5,6 +5,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
 
   require Logger
 
+  alias Commanded.EventStore.Adapters.Extreme.LeaderManager
   alias Commanded.EventStore.Adapters.Extreme.Mapper
   alias Commanded.EventStore.Adapters.Extreme.Config
   alias Commanded.EventStore.RecordedEvent
@@ -19,6 +20,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
       :last_seen_event_id,
       :last_seen_event_number,
       :last_ack_time,
+      :leader_manager_name,
       :name,
       :retry_interval,
       :serializer,
@@ -47,6 +49,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
     state = %State{
       adapter_name: adapter_name,
       spear_conn_name: Config.leader_conn_name(adapter_name),
+      leader_manager_name: Config.leader_manager_name(adapter_name),
       stream: stream,
       name: subscription_name,
       serializer: serializer,
@@ -244,28 +247,11 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
             " failed to subscribe due to not being connected to leader, restarting leader supervisor"
         end)
 
-        %State{adapter_name: adapter_name} = state
+        :ok = LeaderManager.refresh_leader_connection(state.leader_manager_name)
 
-        supervisor_name =
-          Config.supervisor_name(adapter_name)
-          |> IO.inspect(label: "Config.supervisor_name(adapter_name)")
+        Logger.warn(fn -> describe(state) <> " supervisor restarted" end)
 
-        leader_supervisor_name =
-          Config.leader_supervisor_name(adapter_name)
-          |> IO.inspect(label: "Config.leader_supervisor_name(adapter_name)")
-
-        Supervisor.which_children(supervisor_name) |> IO.inspect(label: "which_children")
-
-        Supervisor.terminate_child(supervisor_name, leader_supervisor_name)
-        |> IO.inspect(label: "terminate_child")
-
-        Supervisor.restart_child(supervisor_name, leader_supervisor_name)
-        |> IO.inspect(label: "restart_child")
-
-        Logger.warn(fn ->
-          describe(state) <>
-            " supervisor restarted maybe?"
-        end)
+        send(self(), :subscribe)
 
         %State{state | subscribed?: false}
 
@@ -295,7 +281,8 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
       name: name,
       stream: stream,
       start_from: start_from,
-      concurrency_limit: concurrency_limit
+      concurrency_limit: concurrency_limit,
+      leader_manager_name: leader_manager_name
     } = state
 
     from =
@@ -304,6 +291,10 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
         :current -> :end
         event_number -> event_number
       end
+
+    Logger.warn(fn -> describe(state) <> " create_persistent_subscription" end)
+
+    LeaderManager.start_leader_connection(leader_manager_name)
 
     case Spear.create_persistent_subscription(
            spear_conn_name,
@@ -329,6 +320,8 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
 
   defp connect_to_persistent_subscription(%State{} = state) do
     %State{spear_conn_name: spear_conn_name, name: name, stream: stream} = state
+
+    Logger.warn(fn -> describe(state) <> " connect_to_persistent_subscription" end)
 
     Spear.connect_to_persistent_subscription(spear_conn_name, self(), stream, name, raw?: true)
   end

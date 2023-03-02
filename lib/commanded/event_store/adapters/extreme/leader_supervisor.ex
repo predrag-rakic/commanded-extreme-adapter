@@ -1,47 +1,62 @@
 defmodule Commanded.EventStore.Adapters.Extreme.LeaderSupervisor do
   @moduledoc false
 
-  use Supervisor
+  use DynamicSupervisor
 
   require Logger
 
   alias Commanded.EventStore.Adapters.Extreme.Config
 
   def start_link(config) do
-    name = Keyword.fetch!(config, :adapter_name) |> Config.leader_supervisor_name()
+    Logger.debug(fn -> "LeaderSupervisor (#{inspect(self())}) start_link" end)
 
-    Supervisor.start_link(__MODULE__, config, name: name)
+    name = Keyword.fetch!(config, :adapter_name) |> Config.leader_supervisor_name()
+    DynamicSupervisor.start_link(__MODULE__, config, name: name)
   end
 
-  @impl Supervisor
-  def init(config) do
-    adapter_name = Keyword.fetch!(config, :adapter_name)
-    spear_conn_name = Config.spear_conn_name(adapter_name)
+  @impl true
+  def init(_config) do
+    Logger.debug(fn -> "LeaderSupervisor (#{inspect(self())}) init" end)
 
-    {:ok, info} = Spear.cluster_info(spear_conn_name) |> IO.inspect(label: "cluster_info")
+    DynamicSupervisor.init(strategy: :one_for_one)
+  end
 
-    leader = info |> Enum.find(&(&1.state == :Leader)) |> IO.inspect(label: "leader")
+  def start_leader_connection(leader_supervisor_name, conn_config) do
+    Logger.debug(fn ->
+      "LeaderSupervisor (#{inspect(self())}) start_leader_connection #{inspect(conn_config)}"
+    end)
 
-    leader_conn_name = Config.leader_conn_name(adapter_name)
+    case DynamicSupervisor.start_child(
+           leader_supervisor_name,
+           %{
+             id: LeaderConn,
+             start: {Spear.Connection, :start_link, [conn_config]},
+             restart: :permanent,
+             shutdown: 5000,
+             type: :worker
+           }
+         ) do
+      {:ok, pid} ->
+        {:ok, pid}
 
-    conn_config =
-      Keyword.get(config, :spear)
-      |> Keyword.put(:name, leader_conn_name)
-      # |> Keyword.put(:host, leader.address)
-      # |> Keyword.put(:port, leader.port)
-      |> IO.inspect(label: "conn_config")
+      {:ok, pid, _info} ->
+        {:ok, pid}
 
-    Supervisor.init(
-      [
-        %{
-          id: Conn,
-          start: {Spear.Connection, :start_link, [conn_config]},
-          restart: :permanent,
-          shutdown: 5000,
-          type: :worker
-        }
-      ],
-      strategy: :one_for_one
-    )
+      {:error, {:already_started, pid}} ->
+        {:ok, pid}
+
+      x ->
+        x
+    end
+  end
+
+  def refresh_leader_connection(leader_supervisor_name, conn_config, leader_conn_pid) do
+    Logger.debug(fn ->
+      "LeaderSupervisor (#{inspect(self())}) refresh_leader_connection #{inspect(conn_config)}"
+    end)
+
+    DynamicSupervisor.terminate_child(leader_supervisor_name, leader_conn_pid)
+
+    start_leader_connection(leader_supervisor_name, conn_config)
   end
 end
