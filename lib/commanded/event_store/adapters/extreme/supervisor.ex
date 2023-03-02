@@ -7,10 +7,10 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
   alias Commanded.EventStore.Adapters.Extreme.Config
   alias Commanded.EventStore.Adapters.Extreme.EventPublisher
   alias Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor
+  alias Commanded.EventStore.Adapters.Extreme.LeaderSupervisor
 
   def start_link(config) do
-    adapter_name = Keyword.fetch!(config, :adapter_name)
-    name = Module.concat([adapter_name, Supervisor])
+    name = Keyword.fetch!(config, :adapter_name) |> Config.supervisor_name()
 
     Supervisor.start_link(__MODULE__, config, name: name)
   end
@@ -27,6 +27,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
 
     pubsub_name = Config.pubsub_name(adapter_name)
     spear_conn_name = Config.spear_conn_name(adapter_name)
+    leader_supervisor_name = Config.leader_supervisor_name(adapter_name)
 
     conn_config =
       Keyword.get(config, :spear)
@@ -53,7 +54,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
         shutdown: 5000,
         type: :worker
       },
-      {SubscriptionsSupervisor, name: subscriptions_name}
+      {SubscriptionsSupervisor, name: subscriptions_name},
+      %{
+        id: leader_supervisor_name,
+        start: {LeaderSupervisor, :start_link, [config]},
+        restart: :permanent
+      }
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

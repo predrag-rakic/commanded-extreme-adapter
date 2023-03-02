@@ -13,6 +13,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
     @moduledoc false
 
     defstruct [
+      :adapter_name,
       :spear_conn_name,
       :last_seen_correlation_id,
       :last_seen_event_id,
@@ -44,7 +45,8 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
     end
 
     state = %State{
-      spear_conn_name: Config.spear_conn_name(adapter_name),
+      adapter_name: adapter_name,
+      spear_conn_name: Config.leader_conn_name(adapter_name),
       stream: stream,
       name: subscription_name,
       serializer: serializer,
@@ -219,7 +221,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
         nil
 
       ref ->
-        Spear.cancel_subscription(state.spear_conn_name, state.subscription_ref)
+        Spear.cancel_subscription(state.spear_conn_name, ref)
     end
 
     Logger.debug(fn -> describe(state) <> " cancelled" end)
@@ -236,6 +238,37 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
           subscribed?: true
       }
     else
+      {:error, %Spear.Grpc.Response{message: "Leader info available"}} ->
+        Logger.warn(fn ->
+          describe(state) <>
+            " failed to subscribe due to not being connected to leader, restarting leader supervisor"
+        end)
+
+        %State{adapter_name: adapter_name} = state
+
+        supervisor_name =
+          Config.supervisor_name(adapter_name)
+          |> IO.inspect(label: "Config.supervisor_name(adapter_name)")
+
+        leader_supervisor_name =
+          Config.leader_supervisor_name(adapter_name)
+          |> IO.inspect(label: "Config.leader_supervisor_name(adapter_name)")
+
+        Supervisor.which_children(supervisor_name) |> IO.inspect(label: "which_children")
+
+        Supervisor.terminate_child(supervisor_name, leader_supervisor_name)
+        |> IO.inspect(label: "terminate_child")
+
+        Supervisor.restart_child(supervisor_name, leader_supervisor_name)
+        |> IO.inspect(label: "restart_child")
+
+        Logger.warn(fn ->
+          describe(state) <>
+            " supervisor restarted maybe?"
+        end)
+
+        %State{state | subscribed?: false}
+
       err ->
         %State{retry_interval: retry_interval} = state
 
