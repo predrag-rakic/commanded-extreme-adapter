@@ -8,7 +8,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
 
   require Logger
 
-  alias Commanded.EventStore.Adapters.Extreme.LeaderSupervisor
+  alias Commanded.EventStore.Adapters.Extreme.LeaderConnectionSupervisor
   alias Commanded.EventStore.Adapters.Extreme.Config
 
   ## Client API
@@ -41,7 +41,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
     defstruct [
       :leader_conn_name,
       :leader_conn_pid,
-      :leader_supervisor_name,
+      :leader_conn_supervisor_name,
       :name,
       :spear_config,
       :spear_conn_name
@@ -53,13 +53,13 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
     adapter_name = Keyword.fetch!(config, :adapter_name)
 
     leader_conn_name = Config.leader_conn_name(adapter_name)
-    leader_supervisor_name = Config.leader_supervisor_name(adapter_name)
+    leader_conn_supervisor_name = Config.leader_conn_supervisor_name(adapter_name)
     leader_conn_manager_name = Config.leader_conn_manager_name(adapter_name)
     spear_conn_name = Config.spear_conn_name(adapter_name)
 
     state = %State{
       leader_conn_name: leader_conn_name,
-      leader_supervisor_name: leader_supervisor_name,
+      leader_conn_supervisor_name: leader_conn_supervisor_name,
       leader_conn_pid: nil,
       name: leader_conn_manager_name,
       spear_config: spear_config,
@@ -91,7 +91,10 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
       |> Keyword.put(:port, 2113)
 
     {:ok, pid} =
-      LeaderSupervisor.start_leader_connection(state.leader_supervisor_name, conn_config)
+      LeaderConnectionSupervisor.start_leader_connection(
+        state.leader_conn_supervisor_name,
+        conn_config
+      )
 
     {:noreply, %State{state | leader_conn_pid: pid}}
   end
@@ -111,7 +114,10 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
         conn_config = get_leader_conn_config(state)
 
         {:ok, pid} =
-          LeaderSupervisor.start_leader_connection(state.leader_supervisor_name, conn_config)
+          LeaderConnectionSupervisor.start_leader_connection(
+            state.leader_conn_supervisor_name,
+            conn_config
+          )
 
         {:reply, :ok, %State{state | leader_conn_pid: pid}}
 
@@ -136,7 +142,10 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
         conn_config = get_leader_conn_config(state)
 
         {:ok, pid} =
-          LeaderSupervisor.start_leader_connection(state.leader_supervisor_name, conn_config)
+          LeaderConnectionSupervisor.start_leader_connection(
+            state.leader_conn_supervisor_name,
+            conn_config
+          )
 
         {:reply, :ok, %State{state | leader_conn_pid: pid}}
 
@@ -146,8 +155,8 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
         conn_config = get_leader_conn_config(state)
 
         {:ok, pid} =
-          LeaderSupervisor.refresh_leader_connection(
-            state.leader_supervisor_name,
+          LeaderConnectionSupervisor.refresh_leader_connection(
+            state.leader_conn_supervisor_name,
             conn_config,
             leader_conn_pid
           )

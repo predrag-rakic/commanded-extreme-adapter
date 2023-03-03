@@ -6,7 +6,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
   alias Commanded.EventStore.Adapters.Extreme.Config
   alias Commanded.EventStore.Adapters.Extreme.EventPublisher
   alias Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager
-  alias Commanded.EventStore.Adapters.Extreme.LeaderSupervisor
+  alias Commanded.EventStore.Adapters.Extreme.LeaderConnectionSupervisor
   alias Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor
 
   def start_link(config) do
@@ -27,7 +27,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
 
     pubsub_name = Config.pubsub_name(adapter_name)
     spear_conn_name = Config.spear_conn_name(adapter_name)
-    leader_supervisor_name = Config.leader_supervisor_name(adapter_name)
 
     conn_config =
       Keyword.get(config, :spear)
@@ -35,13 +34,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
 
     children = [
       {Registry, keys: :duplicate, name: pubsub_name, partitions: 1},
-      %{
-        id: Conn,
-        start: {Spear.Connection, :start_link, [conn_config]},
-        restart: :permanent,
-        shutdown: 5000,
-        type: :worker
-      },
+      {Spear.Connection, conn_config},
       %{
         id: EventPublisher,
         start:
@@ -55,11 +48,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
         type: :worker
       },
       {SubscriptionsSupervisor, name: subscriptions_name},
-      %{
-        id: leader_supervisor_name,
-        start: {LeaderSupervisor, :start_link, [config]},
-        restart: :permanent
-      },
+      {LeaderConnectionSupervisor, config},
       {LeaderConnectionManager, config}
     ]
 

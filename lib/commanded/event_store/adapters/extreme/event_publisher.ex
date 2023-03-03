@@ -11,7 +11,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.EventPublisher do
     defstruct [:spear_conn_name, :pubsub_name, :subscription_ref, :stream_name, :serializer]
   end
 
-  alias Commanded.EventStore.Adapters.Extreme.EventPublisher.State
   alias Commanded.EventStore.Adapters.Extreme.Mapper
   alias Commanded.EventStore.RecordedEvent
 
