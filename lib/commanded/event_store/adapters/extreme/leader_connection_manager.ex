@@ -39,10 +39,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
     @moduledoc false
 
     defstruct [
+      :host,
       :leader_conn_name,
       :leader_conn_pid,
       :leader_conn_supervisor_name,
       :name,
+      :port,
       :spear_config,
       :spear_conn_name
     ]
@@ -58,10 +60,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
     spear_conn_name = Config.spear_conn_name(adapter_name)
 
     state = %State{
+      host: nil,
       leader_conn_name: leader_conn_name,
-      leader_conn_supervisor_name: leader_conn_supervisor_name,
       leader_conn_pid: nil,
+      leader_conn_supervisor_name: leader_conn_supervisor_name,
       name: leader_conn_manager_name,
+      port: nil,
       spear_config: spear_config,
       spear_conn_name: spear_conn_name
     }
@@ -85,10 +89,17 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
       ) do
     Logger.debug(describe(state) <> " handle_continue")
 
-    conn_config =
-      get_leader_conn_config(state)
-      # TODO: REMOVE, ONLY FOR TESTING!
-      |> Keyword.put(:port, 2113)
+    [host, port] = get_leader_info(state)
+
+    # # START TEST OVERRIDE
+    # # You can uncomment this block to make sure the leader connection is
+    # # connected to the wrong node at the start, to force a refresh.
+    # {:ok, info} = Spear.cluster_info(state.spear_conn_name)
+    # follower = info |> Enum.find(&(&1.state != :Leader))
+    # port = follower.port
+    # # END TEST OVERRIDE
+
+    conn_config = make_leader_conn_config(state, host, port)
 
     {:ok, pid} =
       LeaderConnectionSupervisor.start_leader_connection(
@@ -96,7 +107,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
         conn_config
       )
 
-    {:noreply, %State{state | leader_conn_pid: pid}}
+    {:noreply, %State{state | leader_conn_pid: pid, host: host, port: port}}
   end
 
   @impl GenServer
@@ -111,7 +122,8 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
       nil ->
         Logger.debug(describe(state) <> " starting")
 
-        conn_config = get_leader_conn_config(state)
+        [host, port] = get_leader_info(state)
+        conn_config = make_leader_conn_config(state, host, port)
 
         {:ok, pid} =
           LeaderConnectionSupervisor.start_leader_connection(
@@ -135,11 +147,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
       ) do
     Logger.debug(describe(state) <> " refresh_leader_connection")
 
-    case state.leader_conn_pid do
-      nil ->
-        Logger.debug(describe(state) <> " starting")
+    [host, port] = get_leader_info(state)
+    conn_config = make_leader_conn_config(state, host, port)
 
-        conn_config = get_leader_conn_config(state)
+    case {state.leader_conn_pid, state.host, state.port} do
+      {nil, _, _} ->
+        Logger.debug(describe(state) <> " starting")
 
         {:ok, pid} =
           LeaderConnectionSupervisor.start_leader_connection(
@@ -147,12 +160,24 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
             conn_config
           )
 
-        {:reply, :ok, %State{state | leader_conn_pid: pid}}
+        {:reply, :ok, %State{state | leader_conn_pid: pid, host: host, port: port}}
 
-      leader_conn_pid ->
+      {_, ^host, ^port} ->
+        # since it is likely that multiple subscribers would call refresh at the
+        # same time, we check if a previous refresh was successful rather than
+        # always restart the connection.
+        Logger.debug(describe(state) <> " configuration up to date")
+
+        {:ok, _} =
+          LeaderConnectionSupervisor.start_leader_connection(
+            state.leader_conn_supervisor_name,
+            conn_config
+          )
+
+        {:reply, :ok, state}
+
+      {leader_conn_pid, _, _} ->
         Logger.debug(describe(state) <> " restarting")
-
-        conn_config = get_leader_conn_config(state)
 
         {:ok, pid} =
           LeaderConnectionSupervisor.refresh_leader_connection(
@@ -161,7 +186,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
             leader_conn_pid
           )
 
-        {:reply, :ok, %State{state | leader_conn_pid: pid}}
+        {:reply, :ok, %State{state | leader_conn_pid: pid, host: host, port: port}}
     end
 
     {:reply, :ok, state}
@@ -178,18 +203,18 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
     "Extreme event store leader manager #{inspect(name)} (#{inspect(self())})"
   end
 
-  defp get_leader_conn_config(%State{
-         leader_conn_name: leader_conn_name,
-         spear_config: spear_config,
-         spear_conn_name: spear_conn_name
-       }) do
-    {:ok, info} = Spear.cluster_info(spear_conn_name)
+  defp get_leader_info(%State{} = state) do
+    {:ok, info} = Spear.cluster_info(state.spear_conn_name)
 
     leader = info |> Enum.find(&(&1.state == :Leader))
 
-    spear_config
-    |> Keyword.put(:name, leader_conn_name)
-    |> Keyword.put(:host, leader.address)
-    |> Keyword.put(:port, leader.port)
+    [leader.address, leader.port]
+  end
+
+  defp make_leader_conn_config(%State{} = state, host, port) do
+    state.spear_config
+    |> Keyword.put(:name, state.leader_conn_name)
+    |> Keyword.put(:host, host)
+    |> Keyword.put(:port, port)
   end
 end
