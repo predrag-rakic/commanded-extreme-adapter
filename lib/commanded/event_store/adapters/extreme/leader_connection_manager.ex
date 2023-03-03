@@ -190,13 +190,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
     {:reply, :ok, state}
   end
 
-  @impl GenServer
-  def handle_info({:DOWN, _ref, :process, _pid, reason}, %State{} = state) do
-    Logger.debug(describe(state) <> " down due to: #{inspect(reason)}")
-
-    {:stop, {:shutdown, reason}, state}
-  end
-
   defp describe(%State{name: name}) do
     "Extreme event store leader manager #{inspect(name)} (#{inspect(self())})"
   end
