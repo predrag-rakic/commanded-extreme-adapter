@@ -62,7 +62,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
     state = %State{
       host: nil,
       leader_conn_name: leader_conn_name,
-      leader_conn_pid: nil,
       leader_conn_supervisor_name: leader_conn_supervisor_name,
       name: leader_conn_manager_name,
       port: nil,
@@ -101,13 +100,13 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
 
     conn_config = make_leader_conn_config(state, host, port)
 
-    {:ok, pid} =
+    :ok =
       LeaderConnectionSupervisor.start_leader_connection(
         state.leader_conn_supervisor_name,
         conn_config
       )
 
-    {:noreply, %State{state | leader_conn_pid: pid, host: host, port: port}}
+    {:noreply, %State{state | host: host, port: port}}
   end
 
   @impl GenServer
@@ -118,20 +117,20 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
       ) do
     Logger.debug(describe(state) <> " start_leader_connection")
 
-    case state.leader_conn_pid do
+    case state.host do
       nil ->
         Logger.debug(describe(state) <> " starting")
 
         [host, port] = get_leader_info(state)
         conn_config = make_leader_conn_config(state, host, port)
 
-        {:ok, pid} =
+        :ok =
           LeaderConnectionSupervisor.start_leader_connection(
             state.leader_conn_supervisor_name,
             conn_config
           )
 
-        {:reply, :ok, %State{state | leader_conn_pid: pid}}
+        {:reply, :ok, %State{state | host: host, port: port}}
 
       _ ->
         Logger.debug(describe(state) <> " already started")
@@ -150,25 +149,25 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
     [host, port] = get_leader_info(state)
     conn_config = make_leader_conn_config(state, host, port)
 
-    case {state.leader_conn_pid, state.host, state.port} do
-      {nil, _, _} ->
+    case {state.host, state.port} do
+      {nil, nil} ->
         Logger.debug(describe(state) <> " starting")
 
-        {:ok, pid} =
+        :ok =
           LeaderConnectionSupervisor.start_leader_connection(
             state.leader_conn_supervisor_name,
             conn_config
           )
 
-        {:reply, :ok, %State{state | leader_conn_pid: pid, host: host, port: port}}
+        {:reply, :ok, %State{state | host: host, port: port}}
 
-      {_, ^host, ^port} ->
+      {^host, ^port} ->
+        Logger.debug(describe(state) <> " configuration up to date")
+
         # since it is likely that multiple subscribers would call refresh at the
         # same time, we check if a previous refresh was successful rather than
         # always restart the connection.
-        Logger.debug(describe(state) <> " configuration up to date")
-
-        {:ok, _} =
+        :ok =
           LeaderConnectionSupervisor.start_leader_connection(
             state.leader_conn_supervisor_name,
             conn_config
@@ -176,17 +175,16 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
 
         {:reply, :ok, state}
 
-      {leader_conn_pid, _, _} ->
+      {_, _} ->
         Logger.debug(describe(state) <> " restarting")
 
-        {:ok, pid} =
+        :ok =
           LeaderConnectionSupervisor.refresh_leader_connection(
             state.leader_conn_supervisor_name,
-            conn_config,
-            leader_conn_pid
+            conn_config
           )
 
-        {:reply, :ok, %State{state | leader_conn_pid: pid, host: host, port: port}}
+        {:reply, :ok, %State{state | host: host, port: port}}
     end
 
     {:reply, :ok, state}
