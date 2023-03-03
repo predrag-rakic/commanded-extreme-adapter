@@ -5,7 +5,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
 
   require Logger
 
-  alias Commanded.EventStore.Adapters.Extreme.LeaderManager
+  alias Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager
   alias Commanded.EventStore.Adapters.Extreme.Mapper
   alias Commanded.EventStore.Adapters.Extreme.Config
   alias Commanded.EventStore.RecordedEvent
@@ -20,7 +20,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
       :last_seen_event_id,
       :last_seen_event_number,
       :last_ack_time,
-      :leader_manager_name,
+      :leader_conn_manager_name,
       :name,
       :retry_interval,
       :serializer,
@@ -49,7 +49,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
     state = %State{
       adapter_name: adapter_name,
       spear_conn_name: Config.leader_conn_name(adapter_name),
-      leader_manager_name: Config.leader_manager_name(adapter_name),
+      leader_conn_manager_name: Config.leader_conn_manager_name(adapter_name),
       stream: stream,
       name: subscription_name,
       serializer: serializer,
@@ -247,7 +247,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
             " failed to subscribe due to not being connected to leader, restarting leader supervisor"
         end)
 
-        :ok = LeaderManager.refresh_leader_connection(state.leader_manager_name)
+        :ok = LeaderConnectionManager.refresh_leader_connection(state.leader_conn_manager_name)
 
         Logger.warn(fn -> describe(state) <> " supervisor restarted" end)
 
@@ -282,7 +282,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
       stream: stream,
       start_from: start_from,
       concurrency_limit: concurrency_limit,
-      leader_manager_name: leader_manager_name
+      leader_conn_manager_name: leader_conn_manager_name
     } = state
 
     from =
@@ -294,7 +294,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
 
     Logger.warn(fn -> describe(state) <> " create_persistent_subscription" end)
 
-    LeaderManager.start_leader_connection(leader_manager_name)
+    LeaderConnectionManager.start_leader_connection(leader_conn_manager_name)
 
     case Spear.create_persistent_subscription(
            spear_conn_name,

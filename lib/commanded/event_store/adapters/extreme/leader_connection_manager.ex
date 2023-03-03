@@ -1,5 +1,8 @@
-defmodule Commanded.EventStore.Adapters.Extreme.LeaderManager do
-  @moduledoc false
+defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager do
+  @moduledoc """
+  The LeaderConnectionManager holds the static eventstoredb / spear configuration as well
+  as the logic for getting the leader information from the database.
+  """
 
   use GenServer
 
@@ -7,6 +10,30 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderManager do
 
   alias Commanded.EventStore.Adapters.Extreme.LeaderSupervisor
   alias Commanded.EventStore.Adapters.Extreme.Config
+
+  ## Client API
+
+  @doc """
+  blocks until the leader connection is started, returns :ok.
+
+  should be called with a name generate by `Config.leader_conn_manager_name/1`.
+  """
+  @spec start_leader_connection(atom | pid | {atom, any} | {:via, atom, any}) :: :ok
+  def start_leader_connection(leader_conn_manager_name) do
+    GenServer.call(leader_conn_manager_name, :start_leader_connection)
+  end
+
+  @doc """
+  Ensure that the leader connection is connected to the current leader, blocks until it is and returns :ok.
+
+  Should be called with a name generate by `Config.leader_conn_manager_name/1`.
+  """
+  @spec refresh_leader_connection(atom | pid | {atom, any} | {:via, atom, any}) :: :ok
+  def refresh_leader_connection(leader_conn_manager_name) do
+    GenServer.call(leader_conn_manager_name, :refresh_leader_connection)
+  end
+
+  ## Server callbacks
 
   defmodule State do
     @moduledoc false
@@ -21,35 +48,32 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderManager do
     ]
   end
 
-  @doc """
-  Start a process to create and connect a persistent connection to the Event Store
-  """
   def start_link(config) do
     spear_config = Keyword.fetch!(config, :spear)
     adapter_name = Keyword.fetch!(config, :adapter_name)
 
     leader_conn_name = Config.leader_conn_name(adapter_name)
     leader_supervisor_name = Config.leader_supervisor_name(adapter_name)
-    name = Config.leader_manager_name(adapter_name)
+    leader_conn_manager_name = Config.leader_conn_manager_name(adapter_name)
     spear_conn_name = Config.spear_conn_name(adapter_name)
 
     state = %State{
       leader_conn_name: leader_conn_name,
       leader_supervisor_name: leader_supervisor_name,
       leader_conn_pid: nil,
-      name: name,
+      name: leader_conn_manager_name,
       spear_config: spear_config,
       spear_conn_name: spear_conn_name
     }
 
-    Logger.debug(fn -> describe(state) <> " start_link" end)
+    Logger.debug(describe(state) <> " start_link")
 
-    GenServer.start_link(__MODULE__, state, name: name)
+    GenServer.start_link(__MODULE__, state, name: leader_conn_manager_name)
   end
 
   @impl GenServer
   def init(%State{} = state) do
-    Logger.debug(fn -> describe(state) <> " init" end)
+    Logger.debug(describe(state) <> " init")
 
     {:ok, state, {:continue, :start_leader_connection}}
   end
@@ -59,7 +83,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderManager do
         :start_leader_connection,
         %State{} = state
       ) do
-    Logger.debug(fn -> describe(state) <> " handle_continue" end)
+    Logger.debug(describe(state) <> " handle_continue")
 
     conn_config =
       get_leader_conn_config(state)
@@ -78,11 +102,11 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderManager do
         _from,
         %State{} = state
       ) do
-    Logger.debug(fn -> describe(state) <> " start_leader_connection" end)
+    Logger.debug(describe(state) <> " start_leader_connection")
 
     case state.leader_conn_pid do
       nil ->
-        Logger.debug(fn -> describe(state) <> " starting" end)
+        Logger.debug(describe(state) <> " starting")
 
         conn_config = get_leader_conn_config(state)
 
@@ -92,7 +116,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderManager do
         {:reply, :ok, %State{state | leader_conn_pid: pid}}
 
       _ ->
-        Logger.debug(fn -> describe(state) <> " already started" end)
+        Logger.debug(describe(state) <> " already started")
         {:reply, :ok, state}
     end
   end
@@ -103,11 +127,11 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderManager do
         _from,
         %State{} = state
       ) do
-    Logger.debug(fn -> describe(state) <> " refresh_leader_connection" end)
+    Logger.debug(describe(state) <> " refresh_leader_connection")
 
     case state.leader_conn_pid do
       nil ->
-        Logger.debug(fn -> describe(state) <> " starting" end)
+        Logger.debug(describe(state) <> " starting")
 
         conn_config = get_leader_conn_config(state)
 
@@ -117,7 +141,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderManager do
         {:reply, :ok, %State{state | leader_conn_pid: pid}}
 
       leader_conn_pid ->
-        Logger.debug(fn -> describe(state) <> " restarting" end)
+        Logger.debug(describe(state) <> " restarting")
 
         conn_config = get_leader_conn_config(state)
 
@@ -136,17 +160,9 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderManager do
 
   @impl GenServer
   def handle_info({:DOWN, _ref, :process, _pid, reason}, %State{} = state) do
-    Logger.debug(fn -> describe(state) <> " down due to: #{inspect(reason)}" end)
+    Logger.debug(describe(state) <> " down due to: #{inspect(reason)}")
 
     {:stop, {:shutdown, reason}, state}
-  end
-
-  def start_leader_connection(leader_manager_name) do
-    GenServer.call(leader_manager_name, :start_leader_connection)
-  end
-
-  def refresh_leader_connection(leader_manager_name) do
-    GenServer.call(leader_manager_name, :refresh_leader_connection)
   end
 
   defp describe(%State{name: name}) do

@@ -10,6 +10,7 @@ defmodule Commanded.EventStore.Adapters.Extreme do
 
   require Logger
 
+  alias Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager
   alias Commanded.EventStore.Adapters.Extreme.Config
   alias Commanded.EventStore.Adapters.Extreme.Mapper
   alias Commanded.EventStore.Adapters.Extreme.Subscription
@@ -139,18 +140,16 @@ defmodule Commanded.EventStore.Adapters.Extreme do
 
   @impl Commanded.EventStore.Adapter
   def delete_subscription(adapter_meta, :all, subscription_name) do
-    spear_conn = spear_conn_name(adapter_meta)
     stream = Map.fetch!(adapter_meta, :all_stream)
 
-    delete_persistent_subscription(spear_conn, stream, subscription_name)
+    delete_persistent_subscription(adapter_meta, stream, subscription_name)
   end
 
   @impl Commanded.EventStore.Adapter
   def delete_subscription(adapter_meta, stream_uuid, subscription_name) do
-    spear_conn = spear_conn_name(adapter_meta)
     stream = stream_name(adapter_meta, stream_uuid)
 
-    delete_persistent_subscription(spear_conn, stream, subscription_name)
+    delete_persistent_subscription(adapter_meta, stream, subscription_name)
   end
 
   @impl Commanded.EventStore.Adapter
@@ -328,14 +327,23 @@ defmodule Commanded.EventStore.Adapters.Extreme do
     end)
   end
 
-  defp delete_persistent_subscription(spear_conn, stream, name) do
+  defp delete_persistent_subscription(adapter_meta, stream, name) do
     Logger.debug(fn ->
       "Attempting to delete persistent subscription named #{inspect(name)} on stream #{inspect(stream)}"
     end)
 
-    case Spear.delete_persistent_subscription(spear_conn, stream, name, []) do
+    leader_conn_manager_name = leader_conn_manager_name(adapter_meta)
+    leader_conn_name = leader_conn_name(adapter_meta)
+
+    LeaderConnectionManager.start_leader_connection(leader_conn_manager_name)
+
+    case Spear.delete_persistent_subscription(leader_conn_name, stream, name, []) do
       :ok ->
         :ok
+
+      {:error, %Spear.Grpc.Response{message: "Leader info available"}} ->
+        :ok = LeaderConnectionManager.refresh_leader_connection(leader_conn_manager_name)
+        Spear.delete_persistent_subscription(leader_conn_name, stream, name, [])
 
       {:error, reason} ->
         {:error, reason}
@@ -353,6 +361,12 @@ defmodule Commanded.EventStore.Adapters.Extreme do
 
   defp spear_conn_name(adapter_meta),
     do: adapter_name(adapter_meta) |> Config.spear_conn_name()
+
+  defp leader_conn_name(adapter_meta),
+    do: adapter_name(adapter_meta) |> Config.leader_conn_name()
+
+  defp leader_conn_manager_name(adapter_meta),
+    do: adapter_name(adapter_meta) |> Config.leader_conn_manager_name()
 
   defp pubsub_name(adapter_meta),
     do: adapter_name(adapter_meta) |> Config.pubsub_name()

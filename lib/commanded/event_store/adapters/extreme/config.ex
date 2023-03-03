@@ -29,6 +29,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.Config do
   def leader_supervisor_name(adapter_name),
     do: Module.concat([adapter_name, LeaderSupervisor])
 
-  def leader_manager_name(adapter_name),
-    do: Module.concat([adapter_name, LeaderManager])
+  def leader_conn_manager_name(adapter_name),
+    do: Module.concat([adapter_name, LeaderConnectionManager])
 end

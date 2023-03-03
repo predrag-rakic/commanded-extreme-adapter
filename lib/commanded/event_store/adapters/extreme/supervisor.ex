@@ -5,7 +5,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
 
   alias Commanded.EventStore.Adapters.Extreme.Config
   alias Commanded.EventStore.Adapters.Extreme.EventPublisher
-  alias Commanded.EventStore.Adapters.Extreme.LeaderManager
+  alias Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager
   alias Commanded.EventStore.Adapters.Extreme.LeaderSupervisor
   alias Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor
 
@@ -28,7 +28,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
     pubsub_name = Config.pubsub_name(adapter_name)
     spear_conn_name = Config.spear_conn_name(adapter_name)
     leader_supervisor_name = Config.leader_supervisor_name(adapter_name)
-    leader_manager_name = Config.leader_manager_name(adapter_name)
 
     conn_config =
       Keyword.get(config, :spear)
@@ -61,11 +60,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
         start: {LeaderSupervisor, :start_link, [config]},
         restart: :permanent
       },
-      %{
-        id: leader_manager_name,
-        start: {LeaderManager, :start_link, [config]},
-        restart: :permanent
-      }
+      {LeaderConnectionManager, config}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
