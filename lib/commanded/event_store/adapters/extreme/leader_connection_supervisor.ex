@@ -19,6 +19,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.LeaderConnectionSupervisor do
   def start_link(config) do
     Logger.debug("LeaderConnectionSupervisor (#{inspect(self())}) start_link")
 
+    # We use a DynamicSupervisor with a single child, as that process may
+    # require being replaced with a new one using updated configuration. Using
+    # a DynamicSupervisor makes achieving this easier than a standard Supervisor,
+    # where the child_spec would have to be deleted after each process
+    # termination, in order to start the child process with a modified child
+    # spec configuration.
     name = Keyword.fetch!(config, :adapter_name) |> Config.leader_conn_supervisor_name()
     DynamicSupervisor.start_link(__MODULE__, config, name: name)
   end
