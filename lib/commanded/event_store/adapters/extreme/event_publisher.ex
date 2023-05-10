@@ -8,17 +8,16 @@ defmodule Commanded.EventStore.Adapters.Extreme.EventPublisher do
   defmodule State do
     @moduledoc false
 
-    defstruct [:event_store, :pubsub, :subscription_ref, :stream_name, :serializer]
+    defstruct [:spear_conn_name, :pubsub_name, :subscription_ref, :stream_name, :serializer]
   end
 
-  alias Commanded.EventStore.Adapters.Extreme.EventPublisher.State
   alias Commanded.EventStore.Adapters.Extreme.Mapper
   alias Commanded.EventStore.RecordedEvent
 
-  def start_link({event_store, pubsub, stream_name, serializer}, opts \\ []) do
+  def start_link({spear_conn_name, pubsub_name, stream_name, serializer}, opts \\ []) do
     state = %State{
-      event_store: event_store,
-      pubsub: pubsub,
+      spear_conn_name: spear_conn_name,
+      pubsub_name: pubsub_name,
       stream_name: stream_name,
       serializer: serializer
     }
@@ -35,13 +34,11 @@ defmodule Commanded.EventStore.Adapters.Extreme.EventPublisher do
 
   @impl GenServer
   def handle_cast(:subscribe, state) do
-    %State{event_store: event_store, stream_name: stream_name} = state
+    %State{spear_conn_name: spear_conn_name, stream_name: stream_name} = state
 
-    {:ok, subscription} = Extreme.subscribe_to(event_store, self(), stream_name)
+    {:ok, subscription_ref} = Spear.subscribe(spear_conn_name, self(), stream_name, raw?: true)
 
-    ref = Process.monitor(subscription)
-
-    {:noreply, %{state | subscription_ref: ref}}
+    {:noreply, %{state | subscription_ref: subscription_ref}}
   end
 
   @impl GenServer
@@ -58,38 +55,31 @@ defmodule Commanded.EventStore.Adapters.Extreme.EventPublisher do
   end
 
   @impl GenServer
-  def handle_info({:on_event, push}, state) do
-    :ok = process_push(push, state)
+  def handle_info({_, msg}, state) do
+    %State{serializer: serializer, pubsub_name: pubsub_name} = state
+
+    msg
+    |> Mapper.to_recorded_event_spear(serializer)
+    |> publish(pubsub_name)
 
     {:noreply, state}
   end
 
-  @impl GenServer
-  def handle_info(_msg, state), do: {:noreply, state}
-
-  defp process_push(push, state) do
-    %State{serializer: serializer, pubsub: pubsub} = state
-
-    push
-    |> Mapper.to_recorded_event(serializer)
-    |> publish(pubsub)
+  defp publish(%RecordedEvent{} = recorded_event, pubsub_name) do
+    :ok = publish_to_all(recorded_event, pubsub_name)
+    :ok = publish_to_stream(recorded_event, pubsub_name)
   end
 
-  defp publish(%RecordedEvent{} = recorded_event, pubsub) do
-    :ok = publish_to_all(recorded_event, pubsub)
-    :ok = publish_to_stream(recorded_event, pubsub)
-  end
-
-  defp publish_to_all(%RecordedEvent{} = recorded_event, pubsub) do
-    Registry.dispatch(pubsub, "$all", fn entries ->
+  defp publish_to_all(%RecordedEvent{} = recorded_event, pubsub_name) do
+    Registry.dispatch(pubsub_name, "$all", fn entries ->
       for {pid, _} <- entries, do: send(pid, {:events, [recorded_event]})
     end)
   end
 
-  defp publish_to_stream(%RecordedEvent{} = recorded_event, pubsub) do
+  defp publish_to_stream(%RecordedEvent{} = recorded_event, pubsub_name) do
     %RecordedEvent{stream_id: stream_id} = recorded_event
 
-    Registry.dispatch(pubsub, stream_id, fn entries ->
+    Registry.dispatch(pubsub_name, stream_id, fn entries ->
       for {pid, _} <- entries, do: send(pid, {:events, [recorded_event]})
     end)
   end

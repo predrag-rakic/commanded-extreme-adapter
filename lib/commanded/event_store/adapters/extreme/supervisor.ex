@@ -5,11 +5,12 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
 
   alias Commanded.EventStore.Adapters.Extreme.Config
   alias Commanded.EventStore.Adapters.Extreme.EventPublisher
+  alias Commanded.EventStore.Adapters.Extreme.LeaderConnectionManager
+  alias Commanded.EventStore.Adapters.Extreme.LeaderConnectionSupervisor
   alias Commanded.EventStore.Adapters.Extreme.SubscriptionsSupervisor
 
   def start_link(config) do
-    event_store = Keyword.fetch!(config, :event_store)
-    name = Module.concat([event_store, Supervisor])
+    name = Keyword.fetch!(config, :adapter_name) |> Config.supervisor_name()
 
     Supervisor.start_link(__MODULE__, config, name: name)
   end
@@ -17,36 +18,38 @@ defmodule Commanded.EventStore.Adapters.Extreme.Supervisor do
   @impl Supervisor
   def init(config) do
     all_stream = Config.all_stream(config)
-    extreme_config = Keyword.get(config, :extreme)
     serializer = Config.serializer(config)
 
-    event_store = Keyword.fetch!(config, :event_store)
-    event_publisher_name = Module.concat([event_store, EventPublisher])
-    pubsub_name = Module.concat([event_store, PubSub])
-    subscriptions_name = Module.concat([event_store, SubscriptionsSupervisor])
+    adapter_name = Keyword.fetch!(config, :adapter_name)
+
+    event_publisher_name = Module.concat([adapter_name, EventPublisher])
+    subscriptions_name = Module.concat([adapter_name, SubscriptionsSupervisor])
+
+    pubsub_name = Config.pubsub_name(adapter_name)
+    spear_conn_name = Config.spear_conn_name(adapter_name)
+
+    conn_config =
+      Keyword.get(config, :spear)
+      |> Keyword.put(:name, spear_conn_name)
 
     children = [
       {Registry, keys: :duplicate, name: pubsub_name, partitions: 1},
-      %{
-        id: Extreme,
-        start: {Extreme, :start_link, [extreme_config, [name: event_store]]},
-        restart: :permanent,
-        shutdown: 5000,
-        type: :worker
-      },
+      {Spear.Connection, conn_config},
       %{
         id: EventPublisher,
         start:
           {EventPublisher, :start_link,
            [
-             {event_store, pubsub_name, all_stream, serializer},
+             {spear_conn_name, pubsub_name, all_stream, serializer},
              [name: event_publisher_name]
            ]},
         restart: :permanent,
         shutdown: 5000,
         type: :worker
       },
-      {SubscriptionsSupervisor, name: subscriptions_name}
+      {SubscriptionsSupervisor, name: subscriptions_name},
+      {LeaderConnectionSupervisor, config},
+      {LeaderConnectionManager, config}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
