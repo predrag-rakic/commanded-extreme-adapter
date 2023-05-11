@@ -201,11 +201,6 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
   end
 
   @impl GenServer
-  def handle_info({:EXIT, _from, reason}, %State{} = state) do
-    Logger.debug(fn -> describe(state) <> " exit due to: #{inspect(reason)}" end)
-  end
-
-  @impl GenServer
   def terminate(_, %State{} = state) do
     ms_since_last_ack =
       (System.monotonic_time() - state.last_ack_time)
