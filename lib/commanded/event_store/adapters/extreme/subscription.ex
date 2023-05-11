@@ -201,6 +201,11 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
   end
 
   @impl GenServer
+  def handle_info({:EXIT, _from, reason}, %State{} = state) do
+    Logger.debug(fn -> describe(state) <> " exit due to: #{inspect(reason)}" end)
+  end
+
+  @impl GenServer
   def terminate(_, %State{} = state) do
     ms_since_last_ack =
       (System.monotonic_time() - state.last_ack_time)
@@ -292,7 +297,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
         event_number -> event_number
       end
 
-    Logger.warn(fn -> describe(state) <> " create_persistent_subscription" end)
+    Logger.debug(fn -> describe(state) <> " create_persistent_subscription" end)
 
     LeaderConnectionManager.start_leader_connection(leader_conn_manager_name)
 
@@ -321,7 +326,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
   defp connect_to_persistent_subscription(%State{} = state) do
     %State{spear_conn_name: spear_conn_name, name: name, stream: stream} = state
 
-    Logger.warn(fn -> describe(state) <> " connect_to_persistent_subscription" end)
+    Logger.debug(fn -> describe(state) <> " connect_to_persistent_subscription" end)
 
     Spear.connect_to_persistent_subscription(spear_conn_name, self(), stream, name, raw?: true)
   end
