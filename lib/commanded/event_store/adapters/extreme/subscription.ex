@@ -301,7 +301,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Subscription do
            stream,
            name,
            %Spear.PersistentSubscription.Settings{
-             max_subscriber_count: concurrency_limit
+             max_subscriber_count: 0
            },
            from: from
          ) do
