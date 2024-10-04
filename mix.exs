@@ -37,7 +37,7 @@ defmodule Commanded.EventStore.Adapters.Extreme.Mixfile do
 
   defp deps do
     [
-      {:commanded, "~> 1.4"},
+      {:commanded, git: "git@github.com:predrag-rakic/commanded"},
       {:spear, "~> 1.3"},
       {:gpb, "~> 4.19"},
 
